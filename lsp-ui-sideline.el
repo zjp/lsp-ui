@@ -244,8 +244,8 @@ INDEX is the line number (relative to the current line)."
         (inhibit-field-text-motion t)
         (index (if (null offset) 1 offset))
         pos)
-        ;; TODO: Convert lsp-ui-sideline--do-place-on-same-line to an if statement
-        ;; in this function depending on lsp-ui-sideline--start-display-from-same-line
+    ;; TODO: Convert lsp-ui-sideline-do-place-on-same-line to an if statement
+    ;; in this function depending on lsp-ui-sideline--start-display-from-same-line
     (while (and (null pos) (<= (abs index) 30))
       (setq index (if up (1- index) (1+ index)))
       (setq pos (lsp-ui-sideline--calc-space win-width str-len index)))
@@ -470,38 +470,46 @@ Push sideline overlays on `lsp-ui-sideline--ovs'."
              (eq (current-buffer) buffer))
     (unless lsp-ui-sideline--show-all-diagnostics
       (lsp-ui-sideline--delete-kind 'diagnostics))
-    (dolist (e (flycheck-overlay-errors-in bol (1+ eol)))
+    (let ((start-pos (if lsp-ui-sideline--show-all-diagnostics (window-start) bol))
+          (end-pos (if lsp-ui-sideline--show-all-diagnostics (window-end) (1+ eol))))
+      (dolist (e (flycheck-overlay-errors-in start-pos end-pos))
                                         ;(if (eq (flycheck-error-line e) lsp-ui-sideline--last-line-number)
                                         ;    (setq lsp-ui-sideline--place-on-same-line nil)
-      (setq lsp-ui-sideline--place-on-same-line t)
-      (let* ((lines (--> (flycheck-error-format-message-and-id e)
-                         (split-string it "\n")
-                         (lsp-ui-sideline--split-long-lines it)))
-             (display-lines (butlast lines (- (length lines) lsp-ui-sideline-diagnostic-max-lines)))
-             (offset 1))
-        (dolist (line (nreverse display-lines))
-          (let* ((msg (string-trim (replace-regexp-in-string "[\t ]+" " " line)))
-                 (msg (replace-regexp-in-string " " " " msg))
-                 (len (length msg))
-                 (level (flycheck-error-level e))
-                 (face (if (eq level 'info) 'success level))
-                 (margin (lsp-ui-sideline--margin-width))
-                 (msg (progn (add-face-text-property 0 len 'lsp-ui-sideline-global nil msg)
-                             (add-face-text-property 0 len face nil msg)
-                             msg))
-                 (string (concat (propertize " " 'display `(space :align-to (- right-fringe ,(lsp-ui-sideline--align len margin))))
-                                 (propertize msg 'display (lsp-ui-sideline--compute-height))))
-                 (pos-ov (if lsp-ui-sideline--place-on-same-line
-                             (lsp-ui-sideline--do-place-on-same-line len bol eol)
-                           (lsp-ui-sideline--find-line len bol eol t offset)))
-                 (ov (and pos-ov (make-overlay (car pos-ov) (car pos-ov) nil t t))))
-            (when pos-ov
-              (setq offset (1+ (car (cdr pos-ov))))
-              (overlay-put ov 'after-string (propertize string 'cursor t))
-              (overlay-put ov 'kind 'diagnostics)
-              (overlay-put ov 'before-string " ")
-              (overlay-put ov 'position (car pos-ov))
-              (push ov lsp-ui-sideline--ovs))))))))
+        (let* ((lines (--> (flycheck-error-format-message-and-id e)
+                           (split-string it "\n")
+                           (lsp-ui-sideline--split-long-lines it)))
+               (error-line (flycheck-error-line e))
+               (min-line (line-number-at-pos (window-start)))
+               (max-line (line-number-at-pos (window-end)))
+               (target-line (- error-line (line-number-at-pos)))
+               (display-lines (butlast lines (- (length lines) lsp-ui-sideline-diagnostic-max-lines)))
+               (offset 1))
+          (when (and (>= error-line min-line) (<= error-line max-line))
+            (save-excursion
+              (forward-line target-line)
+              (dolist (line (nreverse display-lines))
+                (let* ((msg (string-trim (replace-regexp-in-string "[\t ]+" " " line)))
+                       (msg (replace-regexp-in-string " " " " msg))
+                       (len (length msg))
+                       (level (flycheck-error-level e))
+                       (face (if (eq level 'info) 'success level))
+                       (margin (lsp-ui-sideline--margin-width))
+                       (msg (progn (add-face-text-property 0 len 'lsp-ui-sideline-global nil msg)
+                                   (add-face-text-property 0 len face nil msg)
+                                   msg))
+                       (string (concat (propertize " " 'display `(space :align-to (- right-fringe ,(lsp-ui-sideline--align len margin))))
+                                       (propertize msg 'display (lsp-ui-sideline--compute-height))))
+                       (pos-ov (if lsp-ui-sideline--place-on-same-line
+                                   (lsp-ui-sideline--do-place-on-same-line len bol eol)
+                                 (lsp-ui-sideline--find-line len bol eol t offset)))
+                       (ov (and pos-ov (make-overlay (car pos-ov) (car pos-ov) nil t t))))
+                  (when pos-ov
+                    (setq offset (1+ (car (cdr pos-ov))))
+                    (overlay-put ov 'after-string (propertize string 'cursor t))
+                    (overlay-put ov 'kind 'diagnostics)
+                    (overlay-put ov 'before-string " ")
+                    (overlay-put ov 'position (car pos-ov))
+                    (push ov lsp-ui-sideline--ovs)))))))))))
 
 (defun lsp-ui-sideline-apply-code-actions nil
   "Choose and apply code action(s) on the current line."
@@ -693,22 +701,6 @@ from the language server."
                        (lsp-ui-sideline--display-all-info list-infos tag bol eol)))
                    :mode 'tick))))))))))
 
-(defun lsp-ui-sideline--run-all (&optional buffer)
-  "Show information (flycheck + lsp).
-It loops on the symbols of the current BUFFER that are on screen and requests
-information from the language server."
-  (when buffer-file-name
-    (lsp-ui-sideline--delete-kind 'diagnostics))
-  (dolist (e flycheck-current-errors)
-    (let* ((error-line (flycheck-error-line e))
-           (min-line (line-number-at-pos (window-start)))
-           (max-line (line-number-at-pos (window-end)))
-           (target-line (- error-line (line-number-at-pos))))
-      (when (and (>= error-line min-line) (<= error-line max-line))
-        (save-excursion
-          (forward-line target-line)
-          (lsp-ui-sideline--run buffer))))))
-
 (defun lsp-ui-sideline--stop-p ()
   "Return non-nil if the sideline should not be display."
   (or (region-active-p)
@@ -735,6 +727,7 @@ COMMAND is `company-pseudo-tooltip-frontend' parameter."
            (unmodified (if new-tick (equal this-line lsp-ui-sideline--previous-line) t))
            (buffer (current-buffer))
            (point (point)))
+      ;; TODO If using show-all-diagnostics, only delete overlays when the buffer has changed.
       (cond ((and unmodified same-line same-width)
              (lsp-ui-sideline--highlight-current (point)))
             ((not (and same-line same-width))
@@ -748,9 +741,7 @@ COMMAND is `company-pseudo-tooltip-frontend' parameter."
                ;; run lsp-ui only if current-buffer is the same.
                (and (eq buffer (current-buffer))
                     (= point (point))
-                    (if lsp-ui-sideline--show-all-diagnostics
-                        (lsp-ui-sideline--run-all buffer)
-                      (lsp-ui-sideline--run buffer bol eol this-line)))))))))
+                    (lsp-ui-sideline--run buffer bol eol this-line))))))))
 
 (defun lsp-ui-sideline-toggle-symbols-info ()
   "Toggle display of symbols information.
