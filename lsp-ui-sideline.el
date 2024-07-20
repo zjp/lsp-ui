@@ -84,7 +84,7 @@
   :type 'boolean
   :group 'lsp-ui-sideline)
 
-(defcustom lsp-ui-sideline-update-mode 'point
+(defcustom lsp-ui-sideline-action-update-mode 'point
   "Define the mode for updating sideline actions.
 
 When set to `line' the actions will be updated when user
@@ -643,7 +643,7 @@ from the language server."
                      (lsp--registered-capability "textDocument/codeAction")))
         (lsp-request-async
          "textDocument/codeAction"
-         (-let (((start . end) (if (eq lsp-ui-sideline-update-mode 'line)
+         (-let (((start . end) (if (eq lsp-ui-sideline-action-update-mode 'line)
                                    (cons 0 (- eol bol))
                                  (--> (- (point) bol) (cons it it)))))
            (list :textDocument doc-id
