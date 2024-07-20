@@ -104,6 +104,18 @@ when user changes current point."
   :type 'integer
   :group 'lsp-ui-sideline)
 
+(defcustom lsp-ui-sideline-diagnostic-position 'far
+  "Where to begin displaying diagnostics. `far' means right-justify
+with the gutter. `near'"
+  :type '(choice (const near)
+          (const far))
+  :group 'lsp-ui-sideline)
+
+(defcustom lsp-ui-sideline-diagnostic-near-offset 4
+  "How many spaces to leave between code and diagnostic text when lsp-ui-sideline-diagnostic-position is near."
+  :type 'integer
+  :group 'lsp-ui-sideline)
+
 (defcustom lsp-ui-sideline-diagnostic-max-line-length 100
   "Maximum line length of diagnostics in sideline."
   :type 'integer
