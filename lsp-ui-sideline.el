@@ -145,8 +145,13 @@ with the gutter. `near'"
   :type 'string
   :group 'lsp-ui-sideline)
 
-(defcustom lsp-ui-sideline--show-all-diagnostics nil
+(defcustom lsp-ui-sideline-show-all-diagnostics nil
   "Whether to show all a buffer's diagnostics at once."
+  :type 'boolean
+  :group 'lsp-ui-sideline)
+
+(defcustom lsp-ui-sideline-place-on-same-line nil
+  "Whether to show all of a line's diagnostics on that line, truncating if there is not enough space."
   :type 'boolean
   :group 'lsp-ui-sideline)
 
@@ -180,8 +185,6 @@ It is used to know when the window has changed of width.")
 (defvar-local lsp-ui-sideline--last-line-number nil
   "Line number on the last operation.
 Used to avoid calling `line-number-at-pos' when we're on the same line.")
-
-(defvar-local lsp-ui-sideline--place-on-same-line nil)
 
 (defvar-local lsp-ui-sideline--timer nil)
 
@@ -480,19 +483,19 @@ Push sideline overlays on `lsp-ui-sideline--ovs'."
              (bound-and-true-p lsp-ui-sideline-mode)
              lsp-ui-sideline-show-diagnostics
              (eq (current-buffer) buffer))
-    (unless lsp-ui-sideline--show-all-diagnostics
+    (unless lsp-ui-sideline-show-all-diagnostics
       (lsp-ui-sideline--delete-kind 'diagnostics))
-    (let ((start-pos (if lsp-ui-sideline--show-all-diagnostics (window-start) bol))
-          (end-pos (if lsp-ui-sideline--show-all-diagnostics (window-end) (1+ eol))))
+    (let ((start-pos (if lsp-ui-sideline-show-all-diagnostics (point-min) bol))
+          (end-pos (if lsp-ui-sideline-show-all-diagnostics (point-max) (1+ eol))))
       (dolist (e (flycheck-overlay-errors-in start-pos end-pos))
                                         ;(if (eq (flycheck-error-line e) lsp-ui-sideline--last-line-number)
-                                        ;    (setq lsp-ui-sideline--place-on-same-line nil)
+                                        ;    (setq lsp-ui-sideline-place-on-same-line nil)
         (let* ((lines (--> (flycheck-error-format-message-and-id e)
                            (split-string it "\n")
                            (lsp-ui-sideline--split-long-lines it)))
                (error-line (flycheck-error-line e))
-               (min-line (line-number-at-pos (window-start)))
-               (max-line (line-number-at-pos (window-end)))
+               (min-line (line-number-at-pos (point-min)))
+               (max-line (line-number-at-pos (point-max)))
                (target-line (- error-line (line-number-at-pos)))
                (display-lines (butlast lines (- (length lines) lsp-ui-sideline-diagnostic-max-lines)))
                (offset 1))
@@ -511,7 +514,7 @@ Push sideline overlays on `lsp-ui-sideline--ovs'."
                                    msg))
                        (string (concat (propertize " " 'display `(space :align-to (- right-fringe ,(lsp-ui-sideline--align len margin))))
                                        (propertize msg 'display (lsp-ui-sideline--compute-height))))
-                       (pos-ov (if lsp-ui-sideline--place-on-same-line
+                       (pos-ov (if lsp-ui-sideline-place-on-same-line
                                    (lsp-ui-sideline--do-place-on-same-line len bol eol)
                                  (lsp-ui-sideline--find-line len bol eol t offset)))
                        (ov (and pos-ov (make-overlay (car pos-ov) (car pos-ov) nil t t))))
@@ -640,6 +643,7 @@ from the language server."
                            (and (buffer-narrowed-p) (save-restriction (widen) (line-number-at-pos)))
                            (line-number-at-pos)))
            (new-tick (unless line-changed (not (equal this-tick lsp-ui-sideline--last-tick-info))))
+           (buffer-changed (not (equal this-tick lsp-ui-sideline--last-tick-info)))
            (this-line (or this-line (lsp-ui-sideline--get-line bol eol)))
            (line-modified (and new-tick (not (equal this-line lsp-ui-sideline--previous-line))))
            (doc-id (lsp--text-document-identifier))
@@ -648,7 +652,7 @@ from the language server."
       (setq lsp-ui-sideline--tag tag
             lsp-ui-sideline--last-line-number line-widen
             lsp-ui-sideline--last-width (window-text-width))
-      (when (and line-changed lsp-ui-sideline-show-diagnostics)
+      (when (and lsp-ui-sideline-show-diagnostics (if lsp-ui-sideline-show-all-diagnostics buffer-changed line-changed))
         (lsp-ui-sideline--diagnostics buffer bol eol))
       (when (and lsp-ui-sideline-show-code-actions
                  (or (lsp--capability "codeActionProvider")
@@ -675,9 +679,9 @@ from the language server."
       ;; current symbol.  By going from the end of the line towards the front, point will be placed
       ;; at the beginning of each symbol.  As the requests are first collected in a list before
       ;; being processed they are still sent in order from left to right.
+      (setq lsp-ui-sideline--last-tick-info this-tick)
       (when (and lsp-ui-sideline-show-hover (or line-changed line-modified) (lsp--capability "hoverProvider"))
-        (setq lsp-ui-sideline--last-tick-info this-tick
-              lsp-ui-sideline--previous-line this-line)
+        (setq lsp-ui-sideline--previous-line this-line)
         (save-excursion
           (goto-char eol)
           (while (and (> (point) bol)
@@ -733,16 +737,16 @@ COMMAND is `company-pseudo-tooltip-frontend' parameter."
            (same-line (lsp-ui-sideline--valid-tag-p lsp-ui-sideline--tag 'line))
            (same-width (equal (window-text-width) lsp-ui-sideline--last-width))
            (new-tick (and same-line (not (equal (buffer-modified-tick) lsp-ui-sideline--last-tick-info))))
+           (buffer-changed (not (equal (buffer-modified-tick) lsp-ui-sideline--last-tick-info)))
            (bol (and new-tick (line-beginning-position)))
            (eol (and new-tick (line-end-position)))
            (this-line (and new-tick (lsp-ui-sideline--get-line bol eol)))
            (unmodified (if new-tick (equal this-line lsp-ui-sideline--previous-line) t))
            (buffer (current-buffer))
            (point (point)))
-      ;; TODO If using show-all-diagnostics, only delete overlays when the buffer has changed.
       (cond ((and unmodified same-line same-width)
              (lsp-ui-sideline--highlight-current (point)))
-            ((not (and same-line same-width))
+            ((if lsp-ui-sideline-show-all-diagnostics buffer-changed (not (and same-line same-width)))
              (lsp-ui-sideline--delete-ov)))
       (when lsp-ui-sideline--timer
         (cancel-timer lsp-ui-sideline--timer))
@@ -753,7 +757,12 @@ COMMAND is `company-pseudo-tooltip-frontend' parameter."
                ;; run lsp-ui only if current-buffer is the same.
                (and (eq buffer (current-buffer))
                     (= point (point))
-                    (lsp-ui-sideline--run buffer bol eol this-line))))))))
+                    (eq 0 (length lsp-ui-sideline--ovs))
+                    (with-silent-modifications
+                      (cond ((and lsp-ui-sideline-show-all-diagnostics buffer-changed)
+                             (lsp-ui-sideline--run buffer bol eol this-line))
+                            ((unless lsp-ui-sideline-show-all-diagnostics
+                               (lsp-ui-sideline--run buffer bol eol this-line))))))))))))
 
 (defun lsp-ui-sideline-toggle-symbols-info ()
   "Toggle display of symbols information.
